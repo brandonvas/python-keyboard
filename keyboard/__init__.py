@@ -81,6 +81,7 @@ class Keyboard:
         self.fast_type_thresh = 200
         self.pair_delay = 10
         self.adv_timeout = None
+        self.tap_key_enabled = True
 
         size = 4 + self.matrix.keys
         self.data = array.array("L", microcontroller.nvm[: size * 4])
@@ -143,7 +144,7 @@ class Keyboard:
             self.battery.level = battery_level()
 
     def setup(self):
-        convert = lambda a: array.array("H", (get_action_code(k) for k in a))
+        convert = lambda a: array.array("L", (get_action_code(k) for k in a))
         self.default_actionmap = tuple(convert(layer) for layer in self.keymap)
         self.actionmap = self.default_actionmap
         self.actionmaps = {}
@@ -454,12 +455,13 @@ class Keyboard:
                 event = self.get()
                 key = event & 0x7F
                 if event & 0x80 == 0:
+                    # A key was pressed
                     action_code = self.action_code(key)
                     keys[key] = action_code
                     if action_code < 0xFF:
                         self.press(action_code)
                     else:
-                        kind = action_code >> 12
+                        kind = ACT_GET_ACTION_CODE(action_code)
                         if kind < ACT_MODS_TAP:
                             # MODS
                             mods = (action_code >> 8) & 0x1F
@@ -474,6 +476,7 @@ class Keyboard:
                                 keys[key] = keycode
                                 self.press(keycode)
                             else:
+                                print("mod to keycode")
                                 mods = (action_code >> 8) & 0x1F
                                 keycodes = mods_to_keycodes(mods)
                                 self.press(*keycodes)
@@ -487,9 +490,16 @@ class Keyboard:
                                 mouse_action = (action_code >> 8) & 0xF
                                 mouse_time = time.monotonic_ns()
                         elif kind == ACT_LAYER_TAP or kind == ACT_LAYER_TAP_EXT:
-                            layer = (action_code >> 8) & 0x1F
+                            print("LAYER_TAP")
+                            layer = ACT_GET_CONTENT(action_code)
                             mask = 1 << layer
-                            if action_code & 0xE0 == 0xC0:
+                            bypass = ACT_GET_BYPASS(action_code)
+                            if bypass and not self.tap_key_enabled:
+                                # Tap keys have been disabled during runtime, do normal keypress
+                                keycode = ACT_GET_KEY(action_code)
+                                keys[key] = keycode
+                                self.press(keycode)
+                            elif action_code & 0xE0 == 0xC0:
                                 log("LAYER_MODS")
                                 mods = action_code & 0x1F
                                 keycodes = mods_to_keycodes(mods)
@@ -497,7 +507,7 @@ class Keyboard:
                                 self.layer_mask |= mask
                             elif self.is_tapping_key(key):
                                 log("TAP")
-                                keycode = action_code & 0xFF
+                                keycode = ACT_GET_KEY(action_code)
                                 if keycode == OP_TAP_TOGGLE:
                                     log("TOGGLE {}".format(layer))
                                     self.layer_mask = (self.layer_mask & ~mask) | (
@@ -568,11 +578,12 @@ class Keyboard:
                             )
                         )
                 else:
+                    # A key was released
                     action_code = keys[key]
                     if action_code < 0xFF:
                         self.release(action_code)
                     else:
-                        kind = action_code >> 12
+                        kind = ACT_GET_ACTION_CODE(action_code)
                         if kind < ACT_MODS_TAP:
                             # MODS
                             mods = (action_code >> 8) & 0x1F
@@ -594,9 +605,15 @@ class Keyboard:
                                 mouse_action = 0
                                 self.move_mouse(0, 0, 0)
                         elif kind == ACT_LAYER_TAP or kind == ACT_LAYER_TAP_EXT:
-                            layer = (action_code >> 8) & 0x1F
-                            keycode = action_code & 0xFF
-                            if keycode & 0xE0 == 0xC0:
+                            layer = ACT_GET_CONTENT(action_code)
+                            keycode = ACT_GET_KEY(action_code)
+                            bypass = ACT_GET_BYPASS(action_code)
+                            if bypass and not self.tap_key_enabled:
+                                # Tap keys have been disabled during runtime, do normal keypress
+                                keycode = action_code & 0xFF
+                                keys[key] = keycode
+                                self.release(keycode)
+                            elif keycode & 0xE0 == 0xC0:
                                 log("LAYER_MODS")
                                 mods = keycode & 0x1F
                                 keycodes = mods_to_keycodes(mods)

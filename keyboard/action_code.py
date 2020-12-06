@@ -478,7 +478,6 @@ ACT_BACKLIGHT       = 0b1101
 ACT_COMMAND         = 0b1110
 ACT_FUNCTION        = 0b1111
 
-
 OP_BIT_AND = 0
 OP_BIT_OR  = 1
 OP_BIT_XOR = 2
@@ -488,10 +487,7 @@ ON_PRESS    = 1
 ON_RELEASE  = 2
 ON_BOTH     = 3
 
-
 OP_TAP_TOGGLE = 0xF0
-
-
 
 # convert keyname to action code
 def get_action_code(x):
@@ -526,7 +522,38 @@ def mods_to_keycodes(mods):
             o.append(b + i)
     return o
 
-ACTION = lambda kind, param: (kind << 12) | param
+'''
+Action Layout
+    Each key on the keyboard is associated with an action code. Action codes encode the functionality of the button press.
+    
+    An action entry has the following format:
+
+    reserved | action code | bypass | context | keycode |
+    15 bits | 4 bits | 1 bit | 4 bits | 8 bits|
+
+    action code: These encode the type of action stored. They can be found above and have the naming scheme ACT_*.
+    bypass: This flag indicates if an action can be bypassed. Bypassed actions fall back to the default keyboard keys
+    context: Additional information that is used for context. This is generally parsed out by the logic that handles the specific action code.
+    keycode: The associated HID(?) keycode
+'''
+
+# Mask shift constants
+KEY_CODE_WIDTH = 8      # The length of the keycode field
+CONTENT_WIDTH = 4       # The length for the content field
+BYPASS_WIDTH = 1        # The length of the bypass field
+ACTION_CODE_WIDTH = 4   # The length of the action code field
+
+# Shifts
+CONTENT_SHIFT = KEY_CODE_WIDTH
+BYPASS_SHIFT  = CONTENT_SHIFT + CONTENT_WIDTH
+CODE_SHIFT    = BYPASS_SHIFT + BYPASS_WIDTH
+
+ACT_GET_ACTION_CODE = lambda raw: (raw >> CODE_SHIFT) & 0xF
+ACT_GET_BYPASS      = lambda raw: (raw >> BYPASS_SHIFT) & 0x1
+ACT_GET_CONTENT     = lambda raw: (raw >> CONTENT_SHIFT) & 0xF
+ACT_GET_KEY         = lambda raw: (raw >> 0) & 0xFF
+
+ACTION = lambda kind, param: (kind << CODE_SHIFT) | param
 
 MODS_KEY = lambda mods, key: ACTION(ACT_MODS, (mods << 8) | get_action_code(key))
 MODS_TAP = lambda mods, key: ACTION(ACT_MODS_TAP, (mods << 8) | get_action_code(key))
@@ -537,7 +564,7 @@ LAYER_BIT_XOR = lambda part, bits, on: LAYER_BITOP(OP_BIT_XOR, part, bits, on)
 LAYER_INVERT = lambda layer, on: LAYER_BIT_XOR(layer/4,   1<<(layer%4),  on)
 LAYER_TOGGLE = lambda layer: LAYER_INVERT(layer, ON_RELEASE)
 
-LAYER_TAP = lambda layer, key=NO: ACTION(ACT_LAYER_TAP, (layer << 8) | get_action_code(key))
+LAYER_TAP = lambda layer, key=NO, bypassable=False: ACTION(ACT_LAYER_TAP, (bypassable << BYPASS_SHIFT) | (layer << CONTENT_SHIFT) | get_action_code(key))
 LAYER_TAP_TOGGLE = lambda layer: LAYER_TAP(layer, OP_TAP_TOGGLE)
 LAYER_MODS = lambda layer, mods: LAYER_TAP(layer, 0xC0 | mods)
 
